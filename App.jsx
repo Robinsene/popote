@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
-import { ChevronLeft, Plus, Minus, Check, Heart, ShoppingCart, User, ChefHat, Clock, Trash2, Search } from "lucide-react";
+import { ChevronLeft, Plus, Minus, Check, Heart, ShoppingCart, User, ChefHat, Clock, Trash2, Search, MapPin, Navigation, Store } from "lucide-react";
 import { INGREDIENTS, RECIPES, ALLERGENS, APPLIANCES } from "./data.js";
+import { currentPosition, geocode, nearbySupermarkets, mapsLink } from "./stores.js";
 
 const STORAGE_KEY = "popote-data";
 
@@ -25,11 +26,10 @@ const GOALS = [
   { id: "maintien", label: "Maintien", factor: 1.6, kcalPerKg: 32, desc: "Équilibré" },
   { id: "seche", label: "Sèche", factor: 2.2, kcalPerKg: 26, desc: "Beaucoup de protéines, moins de calories" },
 ];
-const MEALS = [
-  { id: "all", label: "Tout" },
-  { id: "breakfast", label: "Petit-déj" },
-  { id: "meal", label: "Repas" },
-  { id: "snack", label: "Snack" },
+const TIME_FILTERS = [
+  { id: "all", label: "Tout", max: Infinity },
+  { id: "15", label: "≤ 15 min", max: 15 },
+  { id: "25", label: "≤ 25 min", max: 25 },
 ];
 
 const DEFAULT_PROFILE = {
@@ -42,7 +42,7 @@ const DEFAULT_PROFILE = {
   allergies: [],
   veg: false,
 };
-const DEFAULT_DATA = { profile: DEFAULT_PROFILE, favorites: [], shopping: [], onboarded: false };
+const DEFAULT_DATA = { profile: DEFAULT_PROFILE, favorites: [], shopping: [], onboarded: false, stores: [], activeStore: null };
 
 /* ---------------- calculs ---------------- */
 const eur = (v) => v.toLocaleString("fr-FR", { style: "currency", currency: "EUR", minimumFractionDigits: 2 });
@@ -74,18 +74,17 @@ function baseStats(recipe) {
   return { kcal, p, c, f, cost: cost + 0.1 /* sel, épices */, allergens: [...allergens], meat };
 }
 
-/** Facteur de portion pour atteindre la cible de protéines (les snacks visent 40 %). */
+/** Facteur de portion pour atteindre la cible de protéines. */
 function scaleFor(recipe, base, target) {
-  const goal = recipe.meal === "snack" ? target * 0.4 : target;
-  const k = goal / Math.max(1, base.p);
+  const k = target / Math.max(1, base.p);
   return Math.round(Math.min(2.2, Math.max(0.6, k)) * 20) / 20;
 }
 
-function analyse(recipe, profile) {
+function analyse(recipe, profile, priceIndex) {
   const base = baseStats(recipe);
   const target = proteinTarget(profile);
   const k = scaleFor(recipe, base, target);
-  const stats = { kcal: base.kcal * k, p: base.p * k, c: base.c * k, f: base.f * k, cost: base.cost * k };
+  const stats = { kcal: base.kcal * k, p: base.p * k, c: base.c * k, f: base.f * k, cost: base.cost * k * priceIndex };
   const reasons = [];
   const badAllergens = base.allergens.filter((a) => profile.allergies.includes(a));
   if (badAllergens.length) reasons.push("allergy");
@@ -98,15 +97,14 @@ function analyse(recipe, profile) {
 
 /** Les recettes les plus proches de la cible de calories passent en premier. */
 function sortScore(a, profile) {
-  const target = kcalTarget(profile) * (a.recipe.meal === "snack" ? 0.4 : 1);
-  return -Math.abs(a.stats.kcal - target);
+  return -Math.abs(a.stats.kcal - kcalTarget(profile));
 }
 
 export default function App() {
   const [data, setData] = useState(null);
   const [tab, setTab] = useState("recipes");
   const [openId, setOpenId] = useState(null);
-  const [meal, setMeal] = useState("all");
+  const [timeFilter, setTimeFilter] = useState("all");
   const [query, setQuery] = useState("");
   const [showHidden, setShowHidden] = useState(false);
   const [toast, setToast] = useState("");
@@ -127,7 +125,9 @@ export default function App() {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); } catch (e) { /* ignore */ }
   }
 
-  const analysed = useMemo(() => (data ? RECIPES.map((r) => analyse(r, data.profile)) : []), [data && data.profile]);
+  const activeStore = data ? (data.stores || []).find((s) => s.id === data.activeStore) || null : null;
+  const priceIndex = activeStore ? activeStore.index : 1;
+  const analysed = useMemo(() => (data ? RECIPES.map((r) => analyse(r, data.profile, priceIndex)) : []), [data && data.profile, priceIndex]);
 
   if (!data) return <div style={{ minHeight: "100vh", background: BG }} />;
 
@@ -155,15 +155,16 @@ export default function App() {
     const a = analysed.find((x) => x.recipe.id === openId);
     screen = <RecipeDetail a={a} target={proteinTarget(profile)} fav={isFav(openId)} onFav={() => toggleFav(openId)} onShop={(s) => addToShopping(a, s)} onBack={() => setOpenId(null)} />;
   } else if (tab === "recipes") {
-    screen = <RecipeList analysed={analysed} profile={profile} meal={meal} setMeal={setMeal} query={query} setQuery={setQuery}
+    screen = <RecipeList analysed={analysed} profile={profile} store={activeStore} timeFilter={timeFilter} setTimeFilter={setTimeFilter} query={query} setQuery={setQuery}
       showHidden={showHidden} setShowHidden={setShowHidden} onOpen={setOpenId} isFav={isFav}
       onboarded={data.onboarded} onSetup={() => goTab("profile")} />;
   } else if (tab === "favorites") {
     screen = <Favorites analysed={analysed.filter((a) => isFav(a.recipe.id))} onOpen={setOpenId} />;
   } else if (tab === "shopping") {
-    screen = <Shopping list={data.shopping} onChange={(list) => persist({ ...data, shopping: list })} />;
+    screen = <Shopping list={data.shopping} stores={data.stores || []} activeStore={activeStore} onChange={(list) => persist({ ...data, shopping: list })} />;
   } else {
-    screen = <Profile profile={profile} setProfile={setProfile} />;
+    screen = <Profile profile={profile} setProfile={setProfile} stores={data.stores || []} activeStore={data.activeStore}
+      onStores={(stores, activeId) => persist({ ...data, stores, activeStore: activeId, onboarded: true })} />;
   }
 
   return (
@@ -187,9 +188,10 @@ export default function App() {
 /* ================= Recettes ================= */
 const REASON_LABEL = { allergy: "allergie", veg: "végétarien", appliance: "appareil manquant", budget: "hors budget" };
 
-function RecipeList({ analysed, profile, meal, setMeal, query, setQuery, showHidden, setShowHidden, onOpen, isFav, onboarded, onSetup }) {
+function RecipeList({ analysed, profile, store, timeFilter, setTimeFilter, query, setQuery, showHidden, setShowHidden, onOpen, isFav, onboarded, onSetup }) {
   const q = query.trim().toLowerCase();
-  const inMeal = analysed.filter((a) => (meal === "all" || a.recipe.meal === meal) && (!q || a.recipe.name.toLowerCase().includes(q)));
+  const maxTime = TIME_FILTERS.find((t) => t.id === timeFilter).max;
+  const inMeal = analysed.filter((a) => a.recipe.time <= maxTime && (!q || a.recipe.name.toLowerCase().includes(q)));
   const ok = inMeal.filter((a) => a.reasons.length === 0).sort((x, y) => sortScore(y, profile) - sortScore(x, profile));
   const overBudget = inMeal.filter((a) => a.reasons.length === 1 && a.reasons[0] === "budget");
   const hiddenCount = inMeal.length - ok.length;
@@ -199,12 +201,13 @@ function RecipeList({ analysed, profile, meal, setMeal, query, setQuery, showHid
   return (
     <div style={{ animation: "pop .25s ease" }}>
       <div style={eyebrow}>POPOTE</div>
-      <div style={h1}>Recettes</div>
+      <div style={h1}>Déjeuner & dîner</div>
       <div style={{ display: "flex", gap: 6, flexWrap: "wrap", margin: "10px 0 16px" }}>
         <Pill color={C.tomato}>{goal.label}</Pill>
         <Pill color={C.protein}>{target} g de protéines / repas</Pill>
         <Pill color={C.kcal}>≈ {kcalTarget(profile)} kcal / repas</Pill>
         <Pill color={C.money}>≤ {eur(profile.budget)}</Pill>
+        <Pill color={C.text}>🛒 {store ? `Prix ${store.chainLabel || store.name}` : "Prix moyens"}</Pill>
       </div>
 
       {!onboarded && (
@@ -223,24 +226,15 @@ function RecipeList({ analysed, profile, meal, setMeal, query, setQuery, showHid
         <input id="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Chercher une recette" style={{ ...inputStyle, paddingLeft: 36 }} />
       </div>
       <div className="hscroll" style={{ display: "flex", gap: 7, overflowX: "auto", margin: "0 -16px 16px", padding: "0 16px" }}>
-        {MEALS.map((m) => (
-          <button key={m.id} className="press" onClick={() => setMeal(m.id)} style={{ flexShrink: 0, cursor: "pointer", borderRadius: 999, padding: "8px 14px", fontSize: 13, fontWeight: 700, border: meal === m.id ? "none" : `1px solid ${C.line}`, background: meal === m.id ? C.text : C.surface, color: meal === m.id ? "#fff" : C.text }}>{m.label}</button>
+        {TIME_FILTERS.map((m) => (
+          <button key={m.id} className="press" onClick={() => setTimeFilter(m.id)} style={{ flexShrink: 0, cursor: "pointer", borderRadius: 999, padding: "8px 14px", fontSize: 13, fontWeight: 700, border: timeFilter === m.id ? "none" : `1px solid ${C.line}`, background: timeFilter === m.id ? C.text : C.surface, color: timeFilter === m.id ? "#fff" : C.text }}>{m.label}</button>
         ))}
       </div>
 
       {ok.length === 0 && <div style={{ ...card, color: C.muted, fontSize: 14, lineHeight: 1.5 }}>Aucune recette ne correspond à ton profil ici. Essaie d'augmenter un peu le budget ou d'ajouter un appareil dans ton profil.</div>}
-      {(meal === "all" ? MEALS.slice(1) : MEALS.filter((m) => m.id === meal)).map((m) => {
-        const group = ok.filter((a) => a.recipe.meal === m.id);
-        if (!group.length) return null;
-        return (
-          <div key={m.id} style={{ marginBottom: 18 }}>
-            {meal === "all" && <div style={{ ...label, margin: "4px 2px 10px" }}>{m.label.toUpperCase()}</div>}
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {group.map((a) => <RecipeCard key={a.recipe.id} a={a} fav={isFav(a.recipe.id)} onOpen={onOpen} />)}
-            </div>
-          </div>
-        );
-      })}
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {ok.map((a) => <RecipeCard key={a.recipe.id} a={a} fav={isFav(a.recipe.id)} onOpen={onOpen} />)}
+      </div>
 
       {hiddenCount > 0 && (
         <div style={{ marginTop: 18 }}>
@@ -302,7 +296,7 @@ function RecipeDetail({ a, target, fav, onFav, onShop, onBack }) {
   const r = a.recipe;
   const s = a.stats;
   const kcalTotal = s.p * 4 + s.c * 4 + s.f * 9 || 1;
-  const goalP = r.meal === "snack" ? Math.round(target * 0.4) : target;
+  const goalP = target;
   const appliancesUsed = r.needs.map((group) => group.map((id) => APPLIANCES.find((x) => x.id === id).label).join(" ou "));
 
   return (
@@ -410,10 +404,12 @@ function Favorites({ analysed, onOpen }) {
 }
 
 /* ================= Courses ================= */
-function Shopping({ list, onChange }) {
+function Shopping({ list, stores, activeStore, onChange }) {
   const todo = list.filter((x) => !x.checked);
   const done = list.filter((x) => x.checked);
-  const total = todo.reduce((n, x) => n + (INGREDIENTS[x.id].eur * x.g) / 1000, 0);
+  const baseTotal = todo.reduce((n, x) => n + (INGREDIENTS[x.id].eur * x.g) / 1000, 0);
+  const total = baseTotal * (activeStore ? activeStore.index : 1);
+  const compare = stores.map((st) => ({ st, t: baseTotal * st.index })).sort((a, b) => a.t - b.t);
   const toggle = (item) => onChange(list.map((x) => (x === item ? { ...x, checked: !x.checked } : x)));
   const row = (x, i, arr) => (
     <button key={x.id + i} onClick={() => toggle(x)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 12, padding: "11px 14px", background: "none", border: "none", borderBottom: i < arr.length - 1 ? `1px solid ${C.line}` : "none", cursor: "pointer", color: C.text, textAlign: "left" }}>
@@ -433,7 +429,19 @@ function Shopping({ list, onChange }) {
         <div style={{ ...card, color: C.muted, fontSize: 14, lineHeight: 1.5, marginTop: 16 }}>Ta liste est vide. Ouvre une recette et touche « Ajouter à la liste de courses ».</div>
       ) : (
         <>
-          <div style={{ fontSize: 13, color: C.muted, margin: "6px 0 16px" }}>{todo.length} article{todo.length > 1 ? "s" : ""} · environ <b style={{ color: C.money }}>{eur(total)}</b></div>
+          <div style={{ fontSize: 13, color: C.muted, margin: "6px 0 16px" }}>{todo.length} article{todo.length > 1 ? "s" : ""} · environ <b style={{ color: C.money }}>{eur(total)}</b>{activeStore ? ` chez ${activeStore.name}` : " (prix moyens)"}</div>
+          {compare.length > 1 && todo.length > 0 && (
+            <div style={{ ...card, marginBottom: 16, padding: "12px 14px" }}>
+              <div style={{ ...label, marginBottom: 8 }}>ESTIMATION PAR MAGASIN</div>
+              {compare.map(({ st, t }, i) => (
+                <div key={st.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "6px 0", fontSize: 13.5 }}>
+                  <span style={{ fontWeight: st.id === (activeStore && activeStore.id) ? 800 : 600 }}>{st.name}{i === 0 && <span style={{ marginLeft: 6, fontSize: 11, fontWeight: 800, color: C.protein, background: `${C.protein}14`, borderRadius: 999, padding: "2px 7px" }}>le moins cher</span>}</span>
+                  <span style={{ fontWeight: 800, fontVariantNumeric: "tabular-nums", color: i === 0 ? C.protein : C.text }}>{eur(t)}</span>
+                </div>
+              ))}
+              <div style={{ fontSize: 11, color: C.mutedDim, marginTop: 4 }}>Estimation à partir d'un indice de prix approximatif par enseigne.</div>
+            </div>
+          )}
           {todo.length > 0 && <div style={{ ...card, padding: 0, overflow: "hidden" }}>{todo.map(row)}</div>}
           {done.length > 0 && (
             <>
@@ -452,7 +460,7 @@ function Shopping({ list, onChange }) {
 }
 
 /* ================= Profil ================= */
-function Profile({ profile, setProfile }) {
+function Profile({ profile, setProfile, stores, activeStore, onStores }) {
   const target = proteinTarget(profile);
   const toggleIn = (key, id) => setProfile({ [key]: profile[key].includes(id) ? profile[key].filter((x) => x !== id) : [...profile[key], id] });
   return (
@@ -480,7 +488,7 @@ function Profile({ profile, setProfile }) {
       <div style={card}>
         <div style={{ display: "flex", gap: 10 }}>
           <Field id="weight" label="Poids (kg)" value={profile.weight} min={35} max={200} onChange={(v) => setProfile({ weight: v })} />
-          <Field id="meals" label="Repas par jour" value={profile.mealsPerDay} min={2} max={7} onChange={(v) => setProfile({ mealsPerDay: v })} />
+          <Field id="meals" label="Repas par jour (tous)" value={profile.mealsPerDay} min={2} max={7} onChange={(v) => setProfile({ mealsPerDay: v })} />
         </div>
         <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginTop: 14 }}>
           <span style={{ fontSize: 13, color: C.muted, fontWeight: 600 }}>{profile.proteinOverride ? "Cible choisie à la main" : "Cible calculée"}</span>
@@ -502,6 +510,8 @@ function Profile({ profile, setProfile }) {
         <input type="range" id="budget" min={1} max={12} step={0.5} value={profile.budget} onChange={(e) => setProfile({ budget: Number(e.target.value) })} style={{ width: "100%", marginTop: 6 }} />
       </div>
 
+      <StoresSection stores={stores} activeStore={activeStore} onStores={onStores} />
+
       <div style={{ ...label, margin: "22px 0 10px" }}>MES APPAREILS</div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
         {APPLIANCES.map((a) => <Chip key={a.id} on={profile.appliances.includes(a.id)} onClick={() => toggleIn("appliances", a.id)} color={C.tomato}>{a.emoji} {a.label}</Chip>)}
@@ -520,8 +530,107 @@ function Profile({ profile, setProfile }) {
           <span style={{ position: "absolute", top: 2, left: profile.veg ? 20 : 2, width: 22, height: 22, borderRadius: "50%", background: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,.25)", transition: "left .2s" }} />
         </span>
       </button>
-      <div style={{ fontSize: 11.5, color: C.mutedDim, marginTop: 14, lineHeight: 1.45 }}>Tout est enregistré sur ton téléphone uniquement.</div>
+      <div style={{ fontSize: 11.5, color: C.mutedDim, marginTop: 14, lineHeight: 1.45 }}>Tout est enregistré sur ton téléphone uniquement. La recherche de supermarchés envoie seulement la position (ou la ville) au service de cartes OpenStreetMap.</div>
     </div>
+  );
+}
+
+/* ================= Supermarchés ================= */
+function StoresSection({ stores, activeStore, onStores }) {
+  const [results, setResults] = useState(null);
+  const [place, setPlace] = useState("");
+  const [where, setWhere] = useState("");
+  const [radius, setRadius] = useState(2);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const saved = new Set(stores.map((s) => s.id));
+
+  async function search(getPos) {
+    setBusy(true); setError(""); setResults(null);
+    try {
+      const pos = await getPos();
+      setWhere(pos.label || "autour de toi");
+      setResults(await nearbySupermarkets(pos, radius));
+    } catch (e) { setError(e.message || "Recherche impossible."); }
+    finally { setBusy(false); }
+  }
+  const toggle = (st) => {
+    if (saved.has(st.id)) {
+      const next = stores.filter((x) => x.id !== st.id);
+      onStores(next, activeStore === st.id ? (next[0] ? next[0].id : null) : activeStore);
+    } else {
+      const { dist, ...keep } = st;
+      onStores([...stores, keep], activeStore || st.id);
+    }
+  };
+  const km = (d) => (d < 1 ? `${Math.round(d * 1000)} m` : `${d.toFixed(1).replace(".", ",")} km`);
+  const idx = (i) => (i === 1 ? "prix moyens" : i < 1 ? `≈ ${Math.round((1 - i) * 100)} % moins cher` : `≈ ${Math.round((i - 1) * 100)} % plus cher`);
+
+  return (
+    <>
+      <div style={{ ...label, margin: "22px 0 10px" }}>MES SUPERMARCHÉS</div>
+      {stores.length > 0 && (
+        <div style={{ ...card, padding: 0, overflow: "hidden", marginBottom: 10 }}>
+          {stores.map((st, i) => {
+            const on = st.id === activeStore;
+            return (
+              <div key={st.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 14px", borderBottom: i < stores.length - 1 ? `1px solid ${C.line}` : "none" }}>
+                <button onClick={() => onStores(stores, st.id)} aria-label={`Faire mes courses chez ${st.name}`} style={{ width: 22, height: 22, borderRadius: "50%", flexShrink: 0, cursor: "pointer", border: on ? `7px solid ${C.tomato}` : `1.6px solid ${C.mutedDim}`, background: "#fff" }} />
+                <span style={{ flex: 1, minWidth: 0 }} onClick={() => onStores(stores, st.id)}>
+                  <span style={{ display: "block", fontSize: 14.5, fontWeight: 800 }}>{st.name}</span>
+                  <span style={{ display: "block", fontSize: 11.5, color: C.muted, marginTop: 1 }}>{st.chainLabel ? idx(st.index) : "enseigne inconnue, prix moyens"}{st.address ? ` · ${st.address}` : ""}</span>
+                </span>
+                <a href={mapsLink(st)} target="_blank" rel="noreferrer" aria-label="Itinéraire" style={{ color: C.text, padding: 4, display: "flex" }}><Navigation size={16} /></a>
+                <button onClick={() => toggle(st)} aria-label="Retirer" style={{ background: "none", border: "none", color: C.mutedDim, cursor: "pointer", padding: 4, display: "flex" }}><Trash2 size={15} /></button>
+              </div>
+            );
+          })}
+        </div>
+      )}
+      <div style={{ fontSize: 11.5, color: C.mutedDim, marginBottom: 10 }}>{stores.length ? "Le magasin coché sert au calcul des prix." : "Ajoute les supermarchés où tu fais tes courses pour adapter les prix."}</div>
+
+      <div style={{ ...card }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <button className="press" disabled={busy} onClick={() => search(currentPosition)} style={{ ...primaryBtn, padding: "11px 14px", fontSize: 14, flex: "1 1 160px", boxShadow: "none", opacity: busy ? 0.6 : 1 }}>
+            <MapPin size={16} /> Autour de moi
+          </button>
+          <div style={{ display: "flex", gap: 6, flex: "1 1 200px" }}>
+            <input id="store-place" value={place} onChange={(e) => setPlace(e.target.value)} onKeyDown={(e) => e.key === "Enter" && place.trim() && search(() => geocode(place))} placeholder="Ville ou code postal" style={{ ...inputStyle, flex: 1, minWidth: 0 }} />
+            <button className="press" disabled={busy || !place.trim()} onClick={() => search(() => geocode(place))} aria-label="Chercher" style={{ background: C.text, border: "none", borderRadius: 12, width: 44, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, opacity: busy || !place.trim() ? 0.5 : 1 }}><Search size={16} color="#fff" /></button>
+          </div>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 10, fontSize: 12.5, color: C.muted, fontWeight: 600 }}>
+          Rayon
+          {[1, 2, 5].map((r) => (
+            <button key={r} onClick={() => setRadius(r)} style={{ borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", border: radius === r ? "none" : `1px solid ${C.line}`, background: radius === r ? C.text : C.surface, color: radius === r ? "#fff" : C.text }}>{r} km</button>
+          ))}
+        </div>
+        {busy && <div style={{ fontSize: 13, color: C.muted, marginTop: 12 }}>Recherche des supermarchés…</div>}
+        {error && <div style={{ fontSize: 13, color: C.danger, marginTop: 12, fontWeight: 600 }}>{error}</div>}
+        {results && (
+          <div style={{ marginTop: 12 }}>
+            <div style={{ fontSize: 12.5, color: C.muted, marginBottom: 6 }}>{results.length} supermarché{results.length > 1 ? "s" : ""} {where ? `· ${where}` : ""}</div>
+            {results.length === 0 && <div style={{ fontSize: 13, color: C.muted }}>Aucun supermarché trouvé dans ce rayon. Essaie un rayon plus grand.</div>}
+            {results.slice(0, 30).map((st) => {
+              const on = saved.has(st.id);
+              return (
+                <div key={st.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 0", borderTop: `1px solid ${C.line}` }}>
+                  <Store size={16} color={C.muted} style={{ flexShrink: 0 }} />
+                  <span style={{ flex: 1, minWidth: 0 }}>
+                    <span style={{ display: "block", fontSize: 14, fontWeight: 700 }}>{st.name}</span>
+                    <span style={{ display: "block", fontSize: 11.5, color: C.muted }}>{km(st.dist)}{st.address ? ` · ${st.address}` : ""}</span>
+                  </span>
+                  <button className="press" onClick={() => toggle(st)} style={{ flexShrink: 0, cursor: "pointer", borderRadius: 10, padding: "6px 10px", fontSize: 12, fontWeight: 700, border: on ? `1.4px solid ${C.protein}` : `1px solid ${C.line}`, background: on ? `${C.protein}14` : "transparent", color: on ? C.protein : C.text, display: "flex", alignItems: "center", gap: 4 }}>
+                    {on ? <><Check size={13} strokeWidth={3} /> Ajouté</> : <><Plus size={13} strokeWidth={3} /> Ajouter</>}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+        <div style={{ fontSize: 10.5, color: C.mutedDim, marginTop: 10 }}>Magasins : © contributeurs OpenStreetMap.</div>
+      </div>
+    </>
   );
 }
 

@@ -63,6 +63,7 @@ export const INGREDIENTS = {
   oignon: { name: "Oignon", kcal: 40, p: 1.2, c: 9, f: 0.1, eur: 2 },
   tomate: { name: "Tomates concassées (conserve)", kcal: 30, p: 1.3, c: 5, f: 0.2, eur: 2 },
   legumes: { name: "Poêlée de légumes surgelée", kcal: 50, p: 3, c: 7, f: 0.5, eur: 3 },
+  haricotsverts: { name: "Haricots verts (surgelés)", kcal: 25, p: 2, c: 3.5, f: 0.2, eur: 3 },
   courgette: { name: "Courgette", kcal: 17, p: 1.2, c: 3, f: 0.3, eur: 2.5 },
   mais: { name: "Maïs (conserve)", kcal: 80, p: 2.5, c: 15, f: 1, eur: 3 },
   avocat: { name: "Avocat", kcal: 160, p: 2, c: 2, f: 15, eur: 8 },
@@ -77,59 +78,9 @@ export const INGREDIENTS = {
  * Recettes, quantités pour UNE portion de base.
  * needs : liste de groupes d'appareils ; il faut au moins un appareil de
  * chaque groupe (ex. [["four", "airfryer"]] = four OU air fryer).
- * meal : "breakfast" | "meal" | "snack"
+ * Uniquement des plats pour le déjeuner et le dîner.
  */
 export const RECIPES = [
-  // ---------- Petits-déjeuners ----------
-  {
-    id: "overnight-oats", name: "Overnight oats protéinés", emoji: "🥣", meal: "breakfast", time: 5, needs: [],
-    items: [["avoine", 60], ["skyr", 150], ["lait", 100], ["fruitsrouges", 80], ["miel", 10]],
-    steps: [
-      "Dans un bocal, mélange les flocons d'avoine, le skyr et le lait.",
-      "Ajoute les fruits rouges et le miel par-dessus.",
-      "Ferme et laisse au frigo toute la nuit (au moins 4 h). Se mange froid.",
-    ],
-  },
-  {
-    id: "pancakes", name: "Pancakes banane-avoine", emoji: "🥞", meal: "breakfast", time: 15, needs: [["poele"], ["mixeur"]],
-    items: [["avoine", 50], ["oeuf", 120], ["banane", 120], ["skyr", 60], ["huile", 3]],
-    steps: [
-      "Mixe les flocons d'avoine, les œufs et la banane jusqu'à obtenir une pâte lisse.",
-      "Fais chauffer la poêle à feu moyen avec un peu d'huile.",
-      "Verse des petites louches de pâte, retourne quand des bulles apparaissent (1 à 2 min par face).",
-      "Sers avec le skyr par-dessus.",
-    ],
-  },
-  {
-    id: "omelette", name: "Omelette épinards-fromage", emoji: "🍳", meal: "breakfast", time: 10, needs: [["poele"]],
-    items: [["oeuf", 180], ["epinards", 60], ["emmental", 20], ["pain", 60], ["huile", 5]],
-    steps: [
-      "Fais revenir les épinards 2 min dans la poêle avec l'huile.",
-      "Bats les œufs avec une pincée de sel et verse-les sur les épinards.",
-      "Quand le dessous est pris, ajoute l'emmental, plie l'omelette en deux.",
-      "Sers avec le pain grillé.",
-    ],
-  },
-  {
-    id: "smoothie-masse", name: "Smoothie prise de masse", emoji: "🥤", meal: "breakfast", time: 5, needs: [["mixeur"]],
-    items: [["lait", 300], ["banane", 120], ["avoine", 40], ["beurrecacahuete", 25], ["whey", 30]],
-    steps: ["Mets tout dans le blender.", "Mixe 30 à 45 secondes jusqu'à ce que ce soit bien lisse. Bois tout de suite."],
-  },
-  {
-    id: "bowl-skyr", name: "Bowl skyr, avoine et amandes", emoji: "🍓", meal: "breakfast", time: 3, needs: [],
-    items: [["skyr", 250], ["avoine", 40], ["amandes", 15], ["fruitsrouges", 80], ["miel", 10]],
-    steps: ["Verse le skyr dans un bol.", "Ajoute l'avoine, les fruits rouges, les amandes concassées et le miel."],
-  },
-  {
-    id: "oeufs-brouilles", name: "Œufs brouillés, jambon et toasts", emoji: "🍞", meal: "breakfast", time: 8, needs: [["poele", "micro"]],
-    items: [["oeuf", 180], ["jambon", 60], ["pain", 60], ["lait", 30]],
-    steps: [
-      "Bats les œufs avec le lait, sel et poivre.",
-      "Poêle : cuis à feu doux en remuant sans arrêt 3 à 4 min. Micro-ondes : 1 min, remue, puis 30 s par 30 s jusqu'à ce que ce soit pris.",
-      "Sers avec le jambon et le pain grillé.",
-    ],
-  },
-
   // ---------- Repas ----------
   {
     id: "poulet-riz", name: "Poulet, riz et brocoli sauce soja", emoji: "🍗", meal: "meal", time: 25, needs: [["poele"], ["casserole"]],
@@ -266,42 +217,90 @@ export const RECIPES = [
     ],
   },
 
-  // ---------- Snacks ----------
   {
-    id: "mug-cake", name: "Mug cake protéiné", emoji: "🧁", meal: "snack", time: 4, needs: [["micro"]],
-    items: [["avoine", 30], ["whey", 30], ["oeuf", 60], ["lait", 50]],
-    steps: ["Dans un grand mug, mélange tous les ingrédients à la fourchette.", "Micro-ondes 1 min 15 à 1 min 30. Laisse tiédir 1 min."],
-  },
-  {
-    id: "skyr-cacahuete", name: "Skyr, banane et beurre de cacahuète", emoji: "🍌", meal: "snack", time: 2, needs: [],
-    items: [["skyr", 200], ["banane", 120], ["beurrecacahuete", 20]],
-    steps: ["Verse le skyr dans un bol, ajoute la banane en rondelles et le beurre de cacahuète."],
-  },
-  {
-    id: "houmous", name: "Houmous maison et pain", emoji: "🫘", meal: "snack", time: 8, needs: [["mixeur"]],
-    items: [["poischiches", 150], ["huile", 10], ["citron", 15], ["pain", 60]],
+    id: "steak-puree", name: "Steak haché, purée maison et haricots verts", emoji: "🥩", meal: "meal", time: 25, needs: [["poele"], ["casserole"]],
+    items: [["boeuf", 150], ["pdt", 250], ["lait", 50], ["haricotsverts", 150]],
     steps: [
-      "Mixe les pois chiches avec l'huile, le citron, une pincée de sel, de cumin et 2 c. à soupe d'eau.",
-      "Mixe jusqu'à ce que ce soit crémeux. Sers avec le pain.",
+      "Épluche et coupe les pommes de terre, fais-les cuire 15 à 20 min dans l'eau salée avec les haricots verts les 8 dernières minutes.",
+      "Égoutte, écrase les pommes de terre avec le lait chaud, sel, poivre.",
+      "Fais cuire le steak haché 3 à 4 min de chaque côté dans la poêle bien chaude.",
     ],
   },
   {
-    id: "poischiches-grilles", name: "Pois chiches grillés croustillants", emoji: "🫛", meal: "snack", time: 20, needs: [["airfryer", "four"]],
-    items: [["poischiches", 150], ["huile", 5]],
+    id: "tortilla-espagnole", name: "Tortilla espagnole (omelette aux pommes de terre)", emoji: "🥔", meal: "meal", time: 30, needs: [["poele"]],
+    items: [["oeuf", 180], ["pdt", 200], ["oignon", 50], ["huile", 10]],
     steps: [
-      "Sèche bien les pois chiches dans un torchon.",
-      "Mélange avec l'huile, sel, paprika fumé.",
-      "Air fryer 200 °C 12 à 15 min en secouant, ou four 200 °C 25 min.",
+      "Coupe les pommes de terre en fines rondelles et l'oignon en lamelles.",
+      "Fais-les cuire à feu doux 15 min dans la poêle avec l'huile, en remuant, jusqu'à ce qu'elles soient tendres.",
+      "Bats les œufs avec sel et poivre, verse sur les pommes de terre.",
+      "Cuis 5 min à feu doux, retourne à l'aide d'une assiette et cuis encore 3 min.",
     ],
   },
   {
-    id: "cottage-fruits", name: "Cottage cheese, fruits rouges et amandes", emoji: "🫐", meal: "snack", time: 2, needs: [],
-    items: [["cottage", 200], ["fruitsrouges", 80], ["amandes", 15]],
-    steps: ["Mets le cottage cheese dans un bol, ajoute les fruits rouges et les amandes."],
+    id: "quiche-sans-pate", name: "Quiche sans pâte jambon-courgette", emoji: "🥧", meal: "meal", time: 40, needs: [["four"]],
+    items: [["oeuf", 150], ["lait", 100], ["jambon", 80], ["emmental", 30], ["courgette", 120]],
+    steps: [
+      "Préchauffe le four à 180 °C.",
+      "Coupe la courgette en petits dés et le jambon en morceaux.",
+      "Bats les œufs avec le lait, sel, poivre, ajoute courgette, jambon et emmental.",
+      "Verse dans un plat huilé et enfourne 30 min jusqu'à ce que ce soit doré et pris.",
+    ],
   },
   {
-    id: "shake-whey", name: "Shake whey et lait", emoji: "🥛", meal: "snack", time: 2, needs: [],
-    items: [["lait", 300], ["whey", 30]],
-    steps: ["Secoue la whey et le lait froid dans un shaker pendant 20 secondes."],
+    id: "poulet-coco", name: "Poulet au curry et lait de coco", emoji: "🍲", meal: "meal", time: 25, needs: [["poele"], ["casserole"]],
+    items: [["poulet", 150], ["coco", 70], ["oignon", 50], ["epinards", 60], ["riz", 80]],
+    steps: [
+      "Fais cuire le riz.",
+      "Fais revenir l'oignon puis le poulet en morceaux 5 min dans la poêle.",
+      "Ajoute 1 c. à café de curry, le lait de coco et laisse mijoter 8 min.",
+      "Ajoute les épinards 2 min avant la fin et sers avec le riz.",
+    ],
+  },
+  {
+    id: "bowl-saumon", name: "Bowl saumon, riz, avocat et maïs", emoji: "🍣", meal: "meal", time: 20, needs: [["poele"], ["casserole"]],
+    items: [["saumon", 120], ["riz", 80], ["avocat", 50], ["mais", 50], ["soja", 10]],
+    steps: [
+      "Fais cuire le riz et laisse-le tiédir.",
+      "Fais cuire le saumon 4 min de chaque côté dans la poêle, puis émiette-le.",
+      "Dispose dans un bol le riz, le saumon, l'avocat en tranches et le maïs.",
+      "Arrose de sauce soja.",
+    ],
+  },
+  {
+    id: "croque", name: "Croque-monsieur maison", emoji: "🥪", meal: "meal", time: 15, needs: [["four", "airfryer", "poele"]],
+    items: [["pain", 120], ["jambon", 80], ["emmental", 40]],
+    steps: [
+      "Garnis 2 tranches de pain avec le jambon et la moitié de l'emmental, referme avec les 2 autres tranches.",
+      "Parsème le reste d'emmental sur le dessus.",
+      "Four 200 °C 10 min, air fryer 180 °C 6 min, ou poêle à couvert 3 min par face.",
+    ],
+  },
+  {
+    id: "oeufs-patates", name: "Pommes de terre sautées et œufs au plat", emoji: "🍳", meal: "meal", time: 25, needs: [["poele"]],
+    items: [["pdt", 250], ["oeuf", 120], ["huile", 10], ["epinards", 60]],
+    steps: [
+      "Coupe les pommes de terre en petits cubes et fais-les dorer 15 à 18 min dans la poêle avec l'huile, en remuant.",
+      "Ajoute les épinards 2 min, pousse le tout sur le côté.",
+      "Casse les œufs dans la poêle et cuis 3 min jusqu'à ce que le blanc soit pris.",
+    ],
+  },
+  {
+    id: "shakshuka", name: "Shakshuka (œufs à la tomate)", emoji: "🍅", meal: "meal", time: 20, needs: [["poele"]],
+    items: [["oeuf", 180], ["tomate", 200], ["poivron", 80], ["oignon", 50], ["pain", 60], ["huile", 5]],
+    steps: [
+      "Fais revenir l'oignon et le poivron 5 min dans l'huile.",
+      "Ajoute les tomates, cumin, paprika, sel, et laisse mijoter 5 min.",
+      "Creuse des puits, casse les œufs dedans, couvre et cuis 5 à 6 min.",
+      "Sers avec le pain.",
+    ],
+  },
+  {
+    id: "nouilles-boeuf", name: "Nouilles sautées au bœuf", emoji: "🍜", meal: "meal", time: 20, needs: [["poele"], ["casserole"]],
+    items: [["pates", 100], ["boeuf", 130], ["legumes", 150], ["soja", 15], ["huile", 8]],
+    steps: [
+      "Fais cuire les pâtes (ou nouilles) et égoutte-les.",
+      "Fais dorer le bœuf dans la poêle avec l'huile, ajoute les légumes et fais sauter 5 min.",
+      "Ajoute les pâtes et la sauce soja, fais sauter 2 min à feu vif.",
+    ],
   },
 ];
