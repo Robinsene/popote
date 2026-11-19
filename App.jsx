@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
+import { Splash, Welcome, SplashSettings, DEFAULT_SPLASH, ANIMATIONS, pickPhrase } from "./Splash.jsx";
 import { ChevronLeft, Plus, Minus, Check, Heart, ShoppingCart, User, ChefHat, Clock, Trash2, Search, MapPin, Navigation, Store } from "lucide-react";
 import { INGREDIENTS, RECIPES, ALLERGENS, APPLIANCES } from "./data.js";
 import { currentPosition, geocode, nearbySupermarkets, mapsLink } from "./stores.js";
@@ -41,8 +42,9 @@ const DEFAULT_PROFILE = {
   appliances: ["poele", "casserole", "micro"],
   allergies: [],
   veg: false,
+  people: 1,
 };
-const DEFAULT_DATA = { profile: DEFAULT_PROFILE, favorites: [], shopping: [], onboarded: false, stores: [], activeStore: null };
+const DEFAULT_DATA = { profile: DEFAULT_PROFILE, favorites: [], shopping: [], onboarded: false, stores: [], activeStore: null, splash: DEFAULT_SPLASH };
 
 /* ---------------- calculs ---------------- */
 const eur = (v) => v.toLocaleString("fr-FR", { style: "currency", currency: "EUR", minimumFractionDigits: 2 });
@@ -108,15 +110,35 @@ export default function App() {
   const [query, setQuery] = useState("");
   const [showHidden, setShowHidden] = useState(false);
   const [toast, setToast] = useState("");
+  const [splash, setSplash] = useState(null);
+  const [askWelcome, setAskWelcome] = useState(false);
+  const [splashSettings, setSplashSettings] = useState(false);
+  const launched = useRef(false);
 
   useEffect(() => {
     let d = DEFAULT_DATA;
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) { const j = JSON.parse(raw); d = { ...DEFAULT_DATA, ...j, profile: { ...DEFAULT_PROFILE, ...(j.profile || {}) } }; }
+      if (raw) { const j = JSON.parse(raw); d = { ...DEFAULT_DATA, ...j, profile: { ...DEFAULT_PROFILE, ...(j.profile || {}) }, splash: { ...DEFAULT_SPLASH, ...(j.splash || {}) } }; }
     } catch (e) { /* stockage indisponible */ }
     setData(d);
   }, []);
+
+  // Écran d'accueil à chaque ouverture de l'appli
+  useEffect(() => {
+    if (!data || launched.current) return;
+    launched.current = true;
+    if (!data.splash.name) setAskWelcome(true);
+    else startSplash(data, data.splash.anim);
+  }, [data]);
+
+  function startSplash(d, anim) {
+    if (anim === "none") return;
+    const variant = anim === "random" ? ANIMATIONS[Math.floor(Math.random() * ANIMATIONS.length)].id : anim;
+    const people = d.profile.people || 1;
+    setSplash({ key: Date.now(), variant, template: pickPhrase(d.splash, people), name: d.splash.name, people,
+      stat: { value: proteinTarget(d.profile), unit: "g", label: "Protéines par repas" } });
+  }
 
   useEffect(() => { if (!toast) return; const t = setTimeout(() => setToast(""), 1800); return () => clearTimeout(t); }, [toast]);
 
@@ -148,12 +170,14 @@ export default function App() {
     setToast("Ajouté à la liste de courses");
   }
 
-  function goTab(t) { setTab(t); setOpenId(null); }
+  function goTab(t) { setTab(t); setOpenId(null); setSplashSettings(false); }
 
   let screen;
-  if (openId) {
+  if (splashSettings) {
+    screen = <SplashSettings settings={data.splash} people={profile.people} onChange={(next) => persist({ ...data, splash: next })} onPreview={(anim) => startSplash(data, anim)} onBack={() => setSplashSettings(false)} />;
+  } else if (openId) {
     const a = analysed.find((x) => x.recipe.id === openId);
-    screen = <RecipeDetail a={a} target={proteinTarget(profile)} fav={isFav(openId)} onFav={() => toggleFav(openId)} onShop={(s) => addToShopping(a, s)} onBack={() => setOpenId(null)} />;
+    screen = <RecipeDetail key={openId} a={a} people={profile.people} target={proteinTarget(profile)} fav={isFav(openId)} onFav={() => toggleFav(openId)} onShop={(s) => addToShopping(a, s)} onBack={() => setOpenId(null)} />;
   } else if (tab === "recipes") {
     screen = <RecipeList analysed={analysed} profile={profile} store={activeStore} timeFilter={timeFilter} setTimeFilter={setTimeFilter} query={query} setQuery={setQuery}
       showHidden={showHidden} setShowHidden={setShowHidden} onOpen={setOpenId} isFav={isFav}
@@ -164,7 +188,8 @@ export default function App() {
     screen = <Shopping list={data.shopping} stores={data.stores || []} activeStore={activeStore} onChange={(list) => persist({ ...data, shopping: list })} />;
   } else {
     screen = <Profile profile={profile} setProfile={setProfile} stores={data.stores || []} activeStore={data.activeStore}
-      onStores={(stores, activeId) => persist({ ...data, stores, activeStore: activeId, onboarded: true })} />;
+      onStores={(stores, activeId) => persist({ ...data, stores, activeStore: activeId, onboarded: true })}
+      name={data.splash.name} onSplashSettings={() => setSplashSettings(true)} />;
   }
 
   return (
@@ -181,6 +206,8 @@ export default function App() {
       <div style={{ padding: "max(22px, env(safe-area-inset-top)) 16px 112px", maxWidth: 520, margin: "0 auto" }}>{screen}</div>
       {toast && <div style={{ position: "fixed", left: "50%", bottom: "calc(86px + env(safe-area-inset-bottom))", transform: "translateX(-50%)", background: C.text, color: "#fff", padding: "10px 16px", borderRadius: 999, fontSize: 13, fontWeight: 700, zIndex: 30, animation: "toastIn .2s ease" }}>{toast}</div>}
       <TabBar tab={tab} onTab={goTab} cartCount={data.shopping.filter((x) => !x.checked).length} favCount={data.favorites.length} />
+      {askWelcome && <Welcome onSave={(name, people) => { const next = { ...data, splash: { ...data.splash, name }, profile: { ...data.profile, people } }; persist(next); setAskWelcome(false); startSplash(next, next.splash.anim); }} />}
+      {splash && <Splash key={splash.key} {...splash} onDone={() => setSplash(null)} />}
     </div>
   );
 }
@@ -206,7 +233,8 @@ function RecipeList({ analysed, profile, store, timeFilter, setTimeFilter, query
         <Pill color={C.tomato}>{goal.label}</Pill>
         <Pill color={C.protein}>{target} g de protéines / repas</Pill>
         <Pill color={C.kcal}>≈ {kcalTarget(profile)} kcal / repas</Pill>
-        <Pill color={C.money}>≤ {eur(profile.budget)}</Pill>
+        <Pill color={C.money}>≤ {eur(profile.budget)} / pers.</Pill>
+        <Pill color={C.text}>👥 {profile.people} personne{profile.people > 1 ? "s" : ""}</Pill>
         <Pill color={C.text}>🛒 {store ? `Prix ${store.chainLabel || store.name}` : "Prix moyens"}</Pill>
       </div>
 
@@ -233,7 +261,7 @@ function RecipeList({ analysed, profile, store, timeFilter, setTimeFilter, query
 
       {ok.length === 0 && <div style={{ ...card, color: C.muted, fontSize: 14, lineHeight: 1.5 }}>Aucune recette ne correspond à ton profil ici. Essaie d'augmenter un peu le budget ou d'ajouter un appareil dans ton profil.</div>}
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-        {ok.map((a) => <RecipeCard key={a.recipe.id} a={a} fav={isFav(a.recipe.id)} onOpen={onOpen} />)}
+        {ok.map((a) => <RecipeCard key={a.recipe.id} a={a} fav={isFav(a.recipe.id)} onOpen={onOpen} people={profile.people} />)}
       </div>
 
       {hiddenCount > 0 && (
@@ -259,7 +287,7 @@ function RecipeList({ analysed, profile, store, timeFilter, setTimeFilter, query
   );
 }
 
-function RecipeCard({ a, fav, onOpen }) {
+function RecipeCard({ a, fav, onOpen, people = 1 }) {
   const r = a.recipe;
   return (
     <button className="press" onClick={() => onOpen(r.id)} style={{ ...card, display: "flex", gap: 13, alignItems: "center", textAlign: "left", cursor: "pointer", color: C.text, width: "100%" }}>
@@ -272,7 +300,7 @@ function RecipeCard({ a, fav, onOpen }) {
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 6, fontSize: 12, fontWeight: 700, fontVariantNumeric: "tabular-nums" }}>
           <span style={{ color: C.protein }}>{Math.round(a.stats.p)} g prot.</span>
           <span style={{ color: C.kcal }}>{Math.round(a.stats.kcal)} kcal</span>
-          <span style={{ color: C.money }}>{eur(a.stats.cost)}</span>
+          <span style={{ color: C.money }}>{eur(a.stats.cost)}{people > 1 ? " / pers." : ""}</span>
           <span style={{ color: C.muted, display: "inline-flex", alignItems: "center", gap: 3 }}><Clock size={11} />{r.time} min</span>
         </div>
       </div>
@@ -291,8 +319,8 @@ function qtyLabel(id, g) {
   return g < 20 ? `${Math.max(1, Math.round(g))} g` : `${r5(g)} g`;
 }
 
-function RecipeDetail({ a, target, fav, onFav, onShop, onBack }) {
-  const [servings, setServings] = useState(1);
+function RecipeDetail({ a, people = 1, target, fav, onFav, onShop, onBack }) {
+  const [servings, setServings] = useState(people || 1);
   const r = a.recipe;
   const s = a.stats;
   const kcalTotal = s.p * 4 + s.c * 4 + s.f * 9 || 1;
@@ -341,7 +369,7 @@ function RecipeDetail({ a, target, fav, onFav, onShop, onBack }) {
         <div style={label}>INGRÉDIENTS</div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <IconBtn small onClick={() => setServings(Math.max(1, servings - 1))} label="Moins de portions"><Minus size={14} /></IconBtn>
-          <span style={{ fontSize: 13, fontWeight: 800, minWidth: 74, textAlign: "center" }}>{servings} portion{servings > 1 ? "s" : ""}</span>
+          <span style={{ fontSize: 13, fontWeight: 800, minWidth: 74, textAlign: "center" }}>{servings} personne{servings > 1 ? "s" : ""}</span>
           <IconBtn small onClick={() => setServings(Math.min(8, servings + 1))} label="Plus de portions"><Plus size={14} /></IconBtn>
         </div>
       </div>
@@ -357,7 +385,7 @@ function RecipeDetail({ a, target, fav, onFav, onShop, onBack }) {
           );
         })}
       </div>
-      {servings > 1 && <div style={{ fontSize: 12, color: C.muted, marginTop: 6 }}>Total pour {servings} portions : {eur(s.cost * servings)}</div>}
+      {servings > 1 && <div style={{ fontSize: 12, color: C.muted, marginTop: 6 }}>Total pour {servings} personnes : {eur(s.cost * servings)}</div>}
 
       <div style={{ ...label, margin: "22px 0 10px" }}>PRÉPARATION</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
@@ -460,7 +488,7 @@ function Shopping({ list, stores, activeStore, onChange }) {
 }
 
 /* ================= Profil ================= */
-function Profile({ profile, setProfile, stores, activeStore, onStores }) {
+function Profile({ profile, setProfile, stores, activeStore, onStores, name, onSplashSettings }) {
   const target = proteinTarget(profile);
   const toggleIn = (key, id) => setProfile({ [key]: profile[key].includes(id) ? profile[key].filter((x) => x !== id) : [...profile[key], id] });
   return (
@@ -468,7 +496,29 @@ function Profile({ profile, setProfile, stores, activeStore, onStores }) {
       <div style={eyebrow}>RÉGLAGES</div>
       <div style={h1}>Profil</div>
 
-      <div style={{ ...label, margin: "20px 0 10px" }}>OBJECTIF</div>
+      <button className="press" onClick={onSplashSettings} style={{ ...card, width: "100%", display: "flex", alignItems: "center", gap: 12, cursor: "pointer", color: C.text, marginTop: 16, textAlign: "left" }}>
+        <span style={{ fontSize: 26 }}>👋</span>
+        <span style={{ flex: 1 }}>
+          <span style={{ display: "block", fontWeight: 800, fontSize: 15 }}>Écran d'accueil</span>
+          <span style={{ display: "block", fontSize: 12.5, color: C.muted, marginTop: 1 }}>{name ? `${name} · ` : ""}animation et phrases</span>
+        </span>
+        <ChevronLeft size={18} style={{ transform: "rotate(180deg)" }} color={C.mutedDim} />
+      </button>
+
+      <div style={{ ...label, margin: "22px 0 10px" }}>PERSONNES À TABLE</div>
+      <div style={{ ...card, display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <span>
+          <span style={{ display: "block", fontWeight: 700, fontSize: 15 }}>Nombre de personnes</span>
+          <span style={{ display: "block", fontSize: 12, color: C.muted, marginTop: 1 }}>Quantités et liste de courses pour tout le monde</span>
+        </span>
+        <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <IconBtn small onClick={() => setProfile({ people: Math.max(1, profile.people - 1) })} label="Moins de personnes"><Minus size={14} /></IconBtn>
+          <span style={{ fontSize: 20, fontWeight: 800, minWidth: 22, textAlign: "center", fontVariantNumeric: "tabular-nums" }}>{profile.people}</span>
+          <IconBtn small onClick={() => setProfile({ people: Math.min(10, profile.people + 1) })} label="Plus de personnes"><Plus size={14} /></IconBtn>
+        </span>
+      </div>
+
+      <div style={{ ...label, margin: "22px 0 10px" }}>OBJECTIF</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
         {GOALS.map((g) => {
           const on = profile.goal === g.id;
@@ -501,7 +551,7 @@ function Profile({ profile, setProfile, stores, activeStore, onStores }) {
         </div>
       </div>
 
-      <div style={{ ...label, margin: "22px 0 10px" }}>BUDGET PAR REPAS</div>
+      <div style={{ ...label, margin: "22px 0 10px" }}>BUDGET PAR REPAS ET PAR PERSONNE</div>
       <div style={card}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
           <span style={{ fontSize: 13, color: C.muted, fontWeight: 600 }}>Maximum par portion</span>
