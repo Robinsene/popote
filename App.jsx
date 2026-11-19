@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { Splash, Welcome, SplashSettings, DEFAULT_SPLASH, ANIMATIONS, pickPhrase } from "./Splash.jsx";
-import { ChevronLeft, Plus, Minus, Check, Heart, ShoppingCart, User, ChefHat, Clock, Trash2, Search, MapPin, Navigation, Store } from "lucide-react";
+import { ChevronLeft, Plus, Minus, Check, Heart, ShoppingCart, User, ChefHat, Clock, Trash2, Search, MapPin, Navigation, Store, CalendarDays, RefreshCw, SlidersHorizontal } from "lucide-react";
+import { DAY_NAMES, MEAL_SLOTS, DEFAULT_PLAN_SETTINGS, QUICK_LUNCH_MAX, weekStart, dayDate, generatePlan, swapSlot } from "./plan.js";
 import { INGREDIENTS, RECIPES, ALLERGENS, APPLIANCES } from "./data.js";
 import { currentPosition, geocode, nearbySupermarkets, mapsLink } from "./stores.js";
 
@@ -44,7 +45,7 @@ const DEFAULT_PROFILE = {
   veg: false,
   people: 1,
 };
-const DEFAULT_DATA = { profile: DEFAULT_PROFILE, favorites: [], shopping: [], onboarded: false, stores: [], activeStore: null, splash: DEFAULT_SPLASH };
+const DEFAULT_DATA = { profile: DEFAULT_PROFILE, favorites: [], shopping: [], onboarded: false, stores: [], activeStore: null, splash: DEFAULT_SPLASH, plan: null, planSettings: DEFAULT_PLAN_SETTINGS };
 
 /* ---------------- calculs ---------------- */
 const eur = (v) => v.toLocaleString("fr-FR", { style: "currency", currency: "EUR", minimumFractionDigits: 2 });
@@ -104,7 +105,7 @@ function sortScore(a, profile) {
 
 export default function App() {
   const [data, setData] = useState(null);
-  const [tab, setTab] = useState("recipes");
+  const [tab, setTab] = useState("plan");
   const [openId, setOpenId] = useState(null);
   const [timeFilter, setTimeFilter] = useState("all");
   const [query, setQuery] = useState("");
@@ -119,7 +120,7 @@ export default function App() {
     let d = DEFAULT_DATA;
     try {
       const raw = localStorage.getItem(STORAGE_KEY);
-      if (raw) { const j = JSON.parse(raw); d = { ...DEFAULT_DATA, ...j, profile: { ...DEFAULT_PROFILE, ...(j.profile || {}) }, splash: { ...DEFAULT_SPLASH, ...(j.splash || {}) } }; }
+      if (raw) { const j = JSON.parse(raw); d = { ...DEFAULT_DATA, ...j, profile: { ...DEFAULT_PROFILE, ...(j.profile || {}) }, splash: { ...DEFAULT_SPLASH, ...(j.splash || {}) }, planSettings: { ...DEFAULT_PLAN_SETTINGS, ...(j.planSettings || {}) } }; }
     } catch (e) { /* stockage indisponible */ }
     setData(d);
   }, []);
@@ -151,6 +152,14 @@ export default function App() {
   const priceIndex = activeStore ? activeStore.index : 1;
   const analysed = useMemo(() => (data ? RECIPES.map((r) => analyse(r, data.profile, priceIndex)) : []), [data && data.profile, priceIndex]);
 
+  const candidates = useMemo(() => analysed.filter((a) => a.reasons.length === 0).sort((x, y) => sortScore(y, data.profile) - sortScore(x, data.profile)), [analysed]);
+
+  // Planning de la semaine : créé automatiquement s'il manque ou date d'une autre semaine
+  useEffect(() => {
+    if (!data || !candidates.length) return;
+    if (!data.plan || data.plan.week !== weekStart()) persist({ ...data, plan: generatePlan(candidates, data.planSettings, null) });
+  }, [data, candidates]);
+
   if (!data) return <div style={{ minHeight: "100vh", background: BG }} />;
 
   const profile = data.profile;
@@ -170,6 +179,28 @@ export default function App() {
     setToast("Ajouté à la liste de courses");
   }
 
+  function setPlan(plan) { persist({ ...data, plan }); }
+  function regenerate(settings = data.planSettings) {
+    persist({ ...data, planSettings: settings, plan: generatePlan(candidates, settings, data.plan) });
+  }
+  function planToShopping() {
+    const byId = {};
+    Object.values(data.plan.slots).forEach((slot) => {
+      if (!slot) return;
+      const a = analysed.find((x) => x.recipe.id === slot.id);
+      if (!a) return;
+      a.recipe.items.forEach(([id, g]) => {
+        const grams = g * a.k * (profile.people || 1);
+        if (!byId[id]) byId[id] = { id, g: 0, checked: false, from: [] };
+        byId[id].g += grams;
+        if (!byId[id].from.includes(a.recipe.name)) byId[id].from.push(a.recipe.name);
+      });
+    });
+    persist({ ...data, shopping: Object.values(byId) });
+    setTab("shopping");
+    setToast("Liste de courses de la semaine prête");
+  }
+
   function goTab(t) { setTab(t); setOpenId(null); setSplashSettings(false); }
 
   let screen;
@@ -178,6 +209,13 @@ export default function App() {
   } else if (openId) {
     const a = analysed.find((x) => x.recipe.id === openId);
     screen = <RecipeDetail key={openId} a={a} people={profile.people} target={proteinTarget(profile)} fav={isFav(openId)} onFav={() => toggleFav(openId)} onShop={(s) => addToShopping(a, s)} onBack={() => setOpenId(null)} />;
+  } else if (tab === "plan") {
+    screen = <PlanView plan={data.plan} settings={data.planSettings} analysed={analysed} profile={profile} store={activeStore}
+      hasList={data.shopping.some((x) => !x.checked)} onOpen={setOpenId}
+      onToggle={(key) => setPlan({ ...data.plan, slots: { ...data.plan.slots, [key]: { ...data.plan.slots[key], ok: !data.plan.slots[key].ok } } })}
+      onSwap={(key) => setPlan(swapSlot(data.plan, key, candidates, data.planSettings))}
+      onRegenerate={() => regenerate()} onSettings={(patch) => regenerate({ ...data.planSettings, ...patch })}
+      onShopping={planToShopping} />;
   } else if (tab === "recipes") {
     screen = <RecipeList analysed={analysed} profile={profile} store={activeStore} timeFilter={timeFilter} setTimeFilter={setTimeFilter} query={query} setQuery={setQuery}
       showHidden={showHidden} setShowHidden={setShowHidden} onOpen={setOpenId} isFav={isFav}
@@ -208,6 +246,140 @@ export default function App() {
       <TabBar tab={tab} onTab={goTab} cartCount={data.shopping.filter((x) => !x.checked).length} favCount={data.favorites.length} />
       {askWelcome && <Welcome onSave={(name, people) => { const next = { ...data, splash: { ...data.splash, name }, profile: { ...data.profile, people } }; persist(next); setAskWelcome(false); startSplash(next, next.splash.anim); }} />}
       {splash && <Splash key={splash.key} {...splash} onDone={() => setSplash(null)} />}
+    </div>
+  );
+}
+
+/* ================= Semaine ================= */
+function PlanView({ plan, settings, analysed, profile, store, hasList, onOpen, onToggle, onSwap, onRegenerate, onSettings, onShopping }) {
+  const [showSettings, setShowSettings] = useState(false);
+  const [confirm, setConfirm] = useState(false);
+  if (!plan) {
+    return (
+      <div style={{ animation: "pop .25s ease" }}>
+        <div style={eyebrow}>PLANNING</div>
+        <div style={h1}>Ma semaine</div>
+        <div style={{ ...card, marginTop: 16, color: C.muted, fontSize: 14, lineHeight: 1.5 }}>Aucune recette ne correspond à ton profil pour l'instant. Augmente le budget ou ajoute un appareil dans le Profil.</div>
+      </div>
+    );
+  }
+  const people = profile.people || 1;
+  const find = (id) => analysed.find((x) => x.recipe.id === id);
+  const entries = Object.entries(plan.slots);
+  const filled = entries.filter(([, v]) => v && find(v.id));
+  const okCount = filled.filter(([, v]) => v.ok).length;
+  const total = filled.reduce((n, [, v]) => n + find(v.id).stats.cost * people, 0);
+  const avgP = filled.length ? filled.reduce((n, [, v]) => n + find(v.id).stats.p, 0) / filled.length : 0;
+  const first = dayDate(plan.week, 0), last = dayDate(plan.week, 6);
+  const fmt = (d, o) => d.toLocaleDateString("fr-FR", o);
+  const todayIdx = (new Date().getDay() + 6) % 7;
+  const days = [...new Set(entries.map(([k]) => Number(k.split("-")[0])))];
+
+  return (
+    <div style={{ animation: "pop .25s ease" }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 10 }}>
+        <div>
+          <div style={eyebrow}>PLANNING</div>
+          <div style={h1}>Ma semaine</div>
+          <div style={{ fontSize: 13, color: C.muted, marginTop: 2 }}>Du {fmt(first, { day: "numeric", month: first.getMonth() === last.getMonth() ? undefined : "short" })} au {fmt(last, { day: "numeric", month: "long" })}</div>
+        </div>
+        <IconBtn onClick={() => setShowSettings(!showSettings)} label="Réglages du planning"><SlidersHorizontal size={17} /></IconBtn>
+      </div>
+
+      {showSettings && (
+        <div style={{ ...card, marginTop: 14 }}>
+          <div style={{ ...label, marginBottom: 8 }}>JOURS À PLANIFIER</div>
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+            {DAY_NAMES.map((d, i) => {
+              const on = settings.days.includes(i);
+              return <button key={d} className="press" onClick={() => onSettings({ days: on ? settings.days.filter((x) => x !== i) : [...settings.days, i].sort() })} aria-pressed={on}
+                style={{ width: 40, height: 40, borderRadius: 12, cursor: "pointer", fontSize: 13, fontWeight: 800, border: on ? "none" : `1px solid ${C.line}`, background: on ? C.text : C.surface, color: on ? "#fff" : C.muted }}>{d.slice(0, 2)}</button>;
+            })}
+          </div>
+          <div style={{ ...label, margin: "16px 0 8px" }}>REPAS</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {MEAL_SLOTS.map((m) => {
+              const on = settings.meals.includes(m.id);
+              return <Chip key={m.id} on={on} color={C.tomato} onClick={() => (on && settings.meals.length === 1) ? null : onSettings({ meals: on ? settings.meals.filter((x) => x !== m.id) : [...settings.meals, m.id] })}>{m.label}</Chip>;
+            })}
+            <Chip on={settings.quickLunch} color={C.protein} onClick={() => onSettings({ quickLunch: !settings.quickLunch })}>Déjeuners rapides (≤ {QUICK_LUNCH_MAX} min)</Chip>
+          </div>
+          <div style={{ fontSize: 11.5, color: C.mutedDim, marginTop: 10 }}>Le planning suit aussi ton Profil : objectif, protéines, budget, appareils, allergies et nombre de personnes. Les plats validés sont gardés.</div>
+        </div>
+      )}
+
+      <div style={{ ...card, marginTop: 14 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 10 }}>
+          <span style={{ fontSize: 13, color: C.muted, fontWeight: 600 }}>{filled.length} repas · <b style={{ color: okCount === filled.length ? C.protein : C.text }}>{okCount} validé{okCount > 1 ? "s" : ""}</b></span>
+          <span style={{ fontSize: 22, fontWeight: 800, color: C.money, fontVariantNumeric: "tabular-nums" }}>≈ {eur(total)}</span>
+        </div>
+        <div style={{ display: "flex", height: 6, borderRadius: 3, background: C.surfaceRaised, overflow: "hidden", marginTop: 8 }}>
+          <span style={{ width: `${filled.length ? (okCount / filled.length) * 100 : 0}%`, background: C.protein, transition: "width .3s" }} />
+        </div>
+        <div style={{ fontSize: 12, color: C.muted, marginTop: 8 }}>
+          {people > 1 ? `Pour ${people} personnes · ` : ""}{Math.round(avgP)} g de protéines par repas en moyenne · {store ? `prix ${store.chainLabel || store.name}` : "prix moyens"}
+        </div>
+        <div style={{ display: "flex", gap: 8, marginTop: 12, flexWrap: "wrap" }}>
+          <button className="press" onClick={onRegenerate} style={{ ...ghostBtn, flex: "1 1 auto", justifyContent: "center" }}><RefreshCw size={14} /> Proposer d'autres plats</button>
+          {!confirm ? (
+            <button className="press" onClick={() => (hasList ? setConfirm(true) : onShopping())} style={{ ...primaryBtn, padding: "9px 14px", fontSize: 13.5, flex: "1 1 auto", boxShadow: "none" }}><ShoppingCart size={15} /> Faire les courses</button>
+          ) : (
+            <span style={{ display: "flex", gap: 6, flex: "1 1 auto", alignItems: "center", flexWrap: "wrap" }}>
+              <span style={{ fontSize: 12.5, color: C.muted, fontWeight: 600 }}>Remplacer ta liste actuelle ?</span>
+              <button className="press" onClick={() => { setConfirm(false); onShopping(); }} style={{ ...primaryBtn, padding: "7px 12px", fontSize: 12.5, boxShadow: "none" }}>Remplacer</button>
+              <button className="press" onClick={() => setConfirm(false)} style={{ ...ghostBtn, padding: "7px 12px" }}>Annuler</button>
+            </span>
+          )}
+        </div>
+      </div>
+      <div style={{ fontSize: 11.5, color: C.mutedDim, margin: "8px 2px 0" }}>Valide les plats qui te plaisent ✓, change les autres ⟳. « Proposer d'autres plats » garde ceux que tu as validés.</div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 14, marginTop: 18 }}>
+        {days.map((d) => {
+          const date = dayDate(plan.week, d);
+          const isToday = d === todayIdx;
+          return (
+            <div key={d}>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 8, margin: "0 2px 8px" }}>
+                <span style={{ fontSize: 15, fontWeight: 800, color: isToday ? C.tomato : C.text }}>{DAY_NAMES[d]}</span>
+                <span style={{ fontSize: 12.5, color: C.muted, fontWeight: 600 }}>{fmt(date, { day: "numeric", month: "short" })}{isToday ? " · aujourd'hui" : ""}</span>
+              </div>
+              <div style={{ ...card, padding: 0, overflow: "hidden", border: isToday ? `1.5px solid ${C.tomato}55` : `1px solid ${C.line}` }}>
+                {MEAL_SLOTS.filter((m) => `${d}-${m.id}` in plan.slots).map((m, i, arr) => {
+                  const key = `${d}-${m.id}`;
+                  const slot = plan.slots[key];
+                  const a = slot && find(slot.id);
+                  return (
+                    <div key={key} style={{ display: "flex", alignItems: "center", gap: 11, padding: "11px 12px", borderBottom: i < arr.length - 1 ? `1px solid ${C.line}` : "none", background: slot && slot.ok ? `${C.protein}0D` : "transparent" }}>
+                      {a ? (
+                        <>
+                          <button onClick={() => onOpen(a.recipe.id)} style={{ display: "flex", alignItems: "center", gap: 11, flex: 1, minWidth: 0, background: "none", border: "none", padding: 0, cursor: "pointer", textAlign: "left", color: C.text }}>
+                            <span style={{ width: 44, height: 44, borderRadius: 13, background: C.surfaceRaised, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 23, flexShrink: 0 }}>{a.recipe.emoji}</span>
+                            <span style={{ minWidth: 0 }}>
+                              <span style={{ display: "block", fontSize: 10.5, letterSpacing: ".1em", fontWeight: 800, color: C.muted, textTransform: "uppercase" }}>{m.label}</span>
+                              <span style={{ display: "block", fontSize: 14, fontWeight: 800, lineHeight: 1.2, marginTop: 1 }}>{a.recipe.name}</span>
+                              <span style={{ display: "block", fontSize: 11.5, fontWeight: 700, marginTop: 3, fontVariantNumeric: "tabular-nums" }}>
+                                <span style={{ color: C.protein }}>{Math.round(a.stats.p)} g prot.</span>
+                                <span style={{ color: C.muted }}> · {a.recipe.time} min · </span>
+                                <span style={{ color: C.money }}>{eur(a.stats.cost * people)}</span>
+                              </span>
+                              {a.reasons.length > 0 && <span style={{ display: "block", fontSize: 11, fontWeight: 700, color: C.danger, marginTop: 2 }}>Ne correspond plus à ton profil</span>}
+                            </span>
+                          </button>
+                          <button className="press" onClick={() => onSwap(key)} aria-label={`Changer le ${m.label.toLowerCase()} du ${DAY_NAMES[d].toLowerCase()}`} style={{ width: 34, height: 34, borderRadius: 10, border: `1px solid ${C.line}`, background: C.surface, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", color: C.muted, flexShrink: 0 }}><RefreshCw size={15} /></button>
+                          <button className="press" onClick={() => onToggle(key)} aria-pressed={slot.ok} aria-label={slot.ok ? "Retirer la validation" : "Valider ce plat"} style={{ width: 34, height: 34, borderRadius: 10, border: slot.ok ? "none" : `1px solid ${C.line}`, background: slot.ok ? C.protein : C.surface, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0 }}><Check size={16} color={slot.ok ? "#fff" : C.mutedDim} strokeWidth={3} /></button>
+                        </>
+                      ) : (
+                        <span style={{ fontSize: 13, color: C.muted }}>{m.label} : aucune recette compatible</span>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -309,10 +481,11 @@ function RecipeCard({ a, fav, onOpen, people = 1 }) {
 }
 
 /* ================= Détail ================= */
-function qtyLabel(id, g) {
+function qtyLabel(id, g, wholeUnits = false) {
   const ing = INGREDIENTS[id];
   if (ing.unit) {
-    const n = Math.max(0.5, Math.round((g / ing.unit.g) * 2) / 2);
+    const raw = g / ing.unit.g;
+    const n = wholeUnits ? Math.max(1, Math.ceil(raw - 0.05)) : Math.max(0.5, Math.round(raw * 2) / 2);
     const n2 = String(n).replace(".", ",");
     return `${n2} ${n > 1 ? ing.unit.many : ing.unit.one}`;
   }
@@ -446,7 +619,7 @@ function Shopping({ list, stores, activeStore, onChange }) {
         <span style={{ display: "block", fontSize: 14.5, fontWeight: 700, textDecoration: x.checked ? "line-through" : "none", color: x.checked ? C.mutedDim : C.text }}>{INGREDIENTS[x.id].name}</span>
         <span style={{ display: "block", fontSize: 11.5, color: C.mutedDim, marginTop: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{x.from.join(", ")}</span>
       </span>
-      <span style={{ fontSize: 13.5, fontWeight: 800, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", color: x.checked ? C.mutedDim : C.text }}>{qtyLabel(x.id, x.g)}</span>
+      <span style={{ fontSize: 13.5, fontWeight: 800, fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap", color: x.checked ? C.mutedDim : C.text }}>{qtyLabel(x.id, x.g, true)}</span>
     </button>
   );
   return (
@@ -722,6 +895,7 @@ function IconBtn({ onClick, label: l, small, children }) {
 
 function TabBar({ tab, onTab, cartCount, favCount }) {
   const items = [
+    { id: "plan", label: "Semaine", Icon: CalendarDays },
     { id: "recipes", label: "Recettes", Icon: ChefHat },
     { id: "favorites", label: "Favoris", Icon: Heart, badge: favCount },
     { id: "shopping", label: "Courses", Icon: ShoppingCart, badge: cartCount },
@@ -733,7 +907,7 @@ function TabBar({ tab, onTab, cartCount, favCount }) {
         {items.map(({ id, label: l, Icon, badge }) => {
           const on = tab === id;
           return (
-            <button key={id} onClick={() => onTab(id)} style={{ position: "relative", background: "none", border: "none", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 4, padding: "4px 10px", color: on ? C.text : C.mutedDim }}>
+            <button key={id} onClick={() => onTab(id)} style={{ position: "relative", background: "none", border: "none", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 4, padding: "4px 6px", color: on ? C.text : C.mutedDim }}>
               <Icon size={22} strokeWidth={on ? 2.5 : 2} />
               <span style={{ fontSize: 10.5, fontWeight: on ? 800 : 600 }}>{l}</span>
               {badge > 0 && <span style={{ position: "absolute", top: 0, right: 4, minWidth: 17, height: 17, borderRadius: 999, background: C.tomato, color: "#fff", fontSize: 10, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", padding: "0 4px" }}>{badge}</span>}
