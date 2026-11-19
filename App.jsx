@@ -1,9 +1,9 @@
 import { useState, useEffect, useMemo, useRef } from "react";
 import { Splash, Welcome, SplashSettings, DEFAULT_SPLASH, ANIMATIONS, pickPhrase } from "./Splash.jsx";
-import { ChevronLeft, Plus, Minus, Check, Heart, ShoppingCart, User, ChefHat, Clock, Trash2, Search, MapPin, Navigation, Store, CalendarDays, RefreshCw, SlidersHorizontal } from "lucide-react";
+import { ChevronLeft, Plus, Minus, Check, Heart, ShoppingCart, User, ChefHat, Clock, Trash2, Search, MapPin, CalendarDays, RefreshCw, SlidersHorizontal } from "lucide-react";
 import { DAY_NAMES, MEAL_SLOTS, DEFAULT_PLAN_SETTINGS, QUICK_LUNCH_MAX, weekStart, dayDate, generatePlan, swapSlot } from "./plan.js";
 import { INGREDIENTS, RECIPES, ALLERGENS, APPLIANCES } from "./data.js";
-import { currentPosition, geocode, nearbySupermarkets, mapsLink } from "./stores.js";
+import { CHAINS, CHAIN_KINDS, storeFromChain, mapsLink } from "./stores.js";
 
 const STORAGE_KEY = "popote-data";
 
@@ -753,105 +753,62 @@ function Profile({ profile, setProfile, stores, activeStore, onStores, name, onS
           <span style={{ position: "absolute", top: 2, left: profile.veg ? 20 : 2, width: 22, height: 22, borderRadius: "50%", background: "#fff", boxShadow: "0 1px 3px rgba(0,0,0,.25)", transition: "left .2s" }} />
         </span>
       </button>
-      <div style={{ fontSize: 11.5, color: C.mutedDim, marginTop: 14, lineHeight: 1.45 }}>Tout est enregistré sur ton téléphone uniquement. La recherche de supermarchés envoie seulement la position (ou la ville) au service de cartes OpenStreetMap.</div>
+      <div style={{ fontSize: 11.5, color: C.mutedDim, marginTop: 14, lineHeight: 1.45 }}>Tout est enregistré sur ton téléphone uniquement.</div>
     </div>
   );
 }
 
 /* ================= Supermarchés ================= */
 function StoresSection({ stores, activeStore, onStores }) {
-  const [results, setResults] = useState(null);
-  const [place, setPlace] = useState("");
-  const [where, setWhere] = useState("");
-  const [radius, setRadius] = useState(2);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
   const saved = new Set(stores.map((s) => s.id));
-
-  async function search(getPos) {
-    setBusy(true); setError(""); setResults(null);
-    try {
-      const pos = await getPos();
-      setWhere(pos.label || "autour de toi");
-      setResults(await nearbySupermarkets(pos, radius));
-    } catch (e) { setError(e.message || "Recherche impossible."); }
-    finally { setBusy(false); }
-  }
-  const toggle = (st) => {
-    if (saved.has(st.id)) {
-      const next = stores.filter((x) => x.id !== st.id);
-      onStores(next, activeStore === st.id ? (next[0] ? next[0].id : null) : activeStore);
+  const toggle = (c) => {
+    if (saved.has(c.id)) {
+      const next = stores.filter((x) => x.id !== c.id);
+      onStores(next, activeStore === c.id ? (next[0] ? next[0].id : null) : activeStore);
     } else {
-      const { dist, ...keep } = st;
-      onStores([...stores, keep], activeStore || st.id);
+      onStores([...stores, storeFromChain(c)], activeStore || c.id);
     }
   };
-  const km = (d) => (d < 1 ? `${Math.round(d * 1000)} m` : `${d.toFixed(1).replace(".", ",")} km`);
-  const idx = (i) => (i === 1 ? "prix moyens" : i < 1 ? `≈ ${Math.round((1 - i) * 100)} % moins cher` : `≈ ${Math.round((i - 1) * 100)} % plus cher`);
+  const idx = (i) => (Math.abs(i - 1) < 0.005 ? "prix moyens" : i < 1 ? `≈ ${Math.round((1 - i) * 100)} % moins cher` : `≈ ${Math.round((i - 1) * 100)} % plus cher`);
 
   return (
     <>
       <div style={{ ...label, margin: "22px 0 10px" }}>MES SUPERMARCHÉS</div>
       {stores.length > 0 && (
-        <div style={{ ...card, padding: 0, overflow: "hidden", marginBottom: 10 }}>
-          {stores.map((st, i) => {
-            const on = st.id === activeStore;
-            return (
-              <div key={st.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 14px", borderBottom: i < stores.length - 1 ? `1px solid ${C.line}` : "none" }}>
-                <button onClick={() => onStores(stores, st.id)} aria-label={`Faire mes courses chez ${st.name}`} style={{ width: 22, height: 22, borderRadius: "50%", flexShrink: 0, cursor: "pointer", border: on ? `7px solid ${C.tomato}` : `1.6px solid ${C.mutedDim}`, background: "#fff" }} />
-                <span style={{ flex: 1, minWidth: 0 }} onClick={() => onStores(stores, st.id)}>
-                  <span style={{ display: "block", fontSize: 14.5, fontWeight: 800 }}>{st.name}</span>
-                  <span style={{ display: "block", fontSize: 11.5, color: C.muted, marginTop: 1 }}>{st.chainLabel ? idx(st.index) : "enseigne inconnue, prix moyens"}{st.address ? ` · ${st.address}` : ""}</span>
-                </span>
-                <a href={mapsLink(st)} target="_blank" rel="noreferrer" aria-label="Itinéraire" style={{ color: C.text, padding: 4, display: "flex" }}><Navigation size={16} /></a>
-                <button onClick={() => toggle(st)} aria-label="Retirer" style={{ background: "none", border: "none", color: C.mutedDim, cursor: "pointer", padding: 4, display: "flex" }}><Trash2 size={15} /></button>
-              </div>
-            );
-          })}
-        </div>
-      )}
-      <div style={{ fontSize: 11.5, color: C.mutedDim, marginBottom: 10 }}>{stores.length ? "Le magasin coché sert au calcul des prix." : "Ajoute les supermarchés où tu fais tes courses pour adapter les prix."}</div>
-
-      <div style={{ ...card }}>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button className="press" disabled={busy} onClick={() => search(currentPosition)} style={{ ...primaryBtn, padding: "11px 14px", fontSize: 14, flex: "1 1 160px", boxShadow: "none", opacity: busy ? 0.6 : 1 }}>
-            <MapPin size={16} /> Autour de moi
-          </button>
-          <div style={{ display: "flex", gap: 6, flex: "1 1 200px" }}>
-            <input id="store-place" value={place} onChange={(e) => setPlace(e.target.value)} onKeyDown={(e) => e.key === "Enter" && place.trim() && search(() => geocode(place))} placeholder="Ville ou code postal" style={{ ...inputStyle, flex: 1, minWidth: 0 }} />
-            <button className="press" disabled={busy || !place.trim()} onClick={() => search(() => geocode(place))} aria-label="Chercher" style={{ background: C.text, border: "none", borderRadius: 12, width: 44, display: "flex", alignItems: "center", justifyContent: "center", cursor: "pointer", flexShrink: 0, opacity: busy || !place.trim() ? 0.5 : 1 }}><Search size={16} color="#fff" /></button>
-          </div>
-        </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 10, fontSize: 12.5, color: C.muted, fontWeight: 600 }}>
-          Rayon
-          {[1, 2, 5].map((r) => (
-            <button key={r} onClick={() => setRadius(r)} style={{ borderRadius: 999, padding: "4px 10px", fontSize: 12, fontWeight: 700, cursor: "pointer", border: radius === r ? "none" : `1px solid ${C.line}`, background: radius === r ? C.text : C.surface, color: radius === r ? "#fff" : C.text }}>{r} km</button>
-          ))}
-        </div>
-        {busy && <div style={{ fontSize: 13, color: C.muted, marginTop: 12 }}>Recherche des supermarchés…</div>}
-        {error && <div style={{ fontSize: 13, color: C.danger, marginTop: 12, fontWeight: 600 }}>{error}</div>}
-        {results && (
-          <div style={{ marginTop: 12 }}>
-            <div style={{ fontSize: 12.5, color: C.muted, marginBottom: 6 }}>{results.length} supermarché{results.length > 1 ? "s" : ""} {where ? `· ${where}` : ""}</div>
-            {results.length === 0 && <div style={{ fontSize: 13, color: C.muted }}>Aucun supermarché trouvé dans ce rayon. Essaie un rayon plus grand.</div>}
-            {results.slice(0, 30).map((st) => {
-              const on = saved.has(st.id);
+        <>
+          <div style={{ ...card, padding: 0, overflow: "hidden" }}>
+            {stores.map((st, i) => {
+              const on = st.id === activeStore;
               return (
-                <div key={st.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "9px 0", borderTop: `1px solid ${C.line}` }}>
-                  <Store size={16} color={C.muted} style={{ flexShrink: 0 }} />
-                  <span style={{ flex: 1, minWidth: 0 }}>
-                    <span style={{ display: "block", fontSize: 14, fontWeight: 700 }}>{st.name}</span>
-                    <span style={{ display: "block", fontSize: 11.5, color: C.muted }}>{km(st.dist)}{st.address ? ` · ${st.address}` : ""}</span>
-                  </span>
-                  <button className="press" onClick={() => toggle(st)} style={{ flexShrink: 0, cursor: "pointer", borderRadius: 10, padding: "6px 10px", fontSize: 12, fontWeight: 700, border: on ? `1.4px solid ${C.protein}` : `1px solid ${C.line}`, background: on ? `${C.protein}14` : "transparent", color: on ? C.protein : C.text, display: "flex", alignItems: "center", gap: 4 }}>
-                    {on ? <><Check size={13} strokeWidth={3} /> Ajouté</> : <><Plus size={13} strokeWidth={3} /> Ajouter</>}
+                <div key={st.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 14px", borderBottom: i < stores.length - 1 ? `1px solid ${C.line}` : "none", background: on ? `${C.tomato}0D` : "transparent" }}>
+                  <button onClick={() => onStores(stores, st.id)} aria-pressed={on} aria-label={`Faire mes courses chez ${st.name}`} style={{ width: 22, height: 22, borderRadius: "50%", flexShrink: 0, cursor: "pointer", border: on ? "none" : `1.6px solid ${C.mutedDim}`, background: on ? C.tomato : "#fff", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    {on && <Check size={13} color="#fff" strokeWidth={3.2} />}
                   </button>
+                  <span style={{ flex: 1, minWidth: 0, cursor: "pointer" }} onClick={() => onStores(stores, st.id)}>
+                    <span style={{ display: "block", fontSize: 14.5, fontWeight: 800 }}>{st.name}</span>
+                    <span style={{ display: "block", fontSize: 11.5, color: C.muted, marginTop: 1 }}>{idx(st.index)}{on ? " · utilisé pour les prix" : ""}</span>
+                  </span>
+                  <a href={mapsLink(st)} target="_blank" rel="noreferrer" aria-label={`Trouver un ${st.name} sur la carte`} style={{ color: C.text, padding: 4, display: "flex" }}><MapPin size={16} /></a>
                 </div>
               );
             })}
           </div>
-        )}
-        <div style={{ fontSize: 10.5, color: C.mutedDim, marginTop: 10 }}>Magasins : © contributeurs OpenStreetMap.</div>
+          <div style={{ fontSize: 11.5, color: C.mutedDim, margin: "8px 2px 14px" }}>Coche le magasin où tu fais tes courses : les prix des recettes s'adaptent. L'icône 📍 ouvre la carte pour trouver le plus proche.</div>
+        </>
+      )}
+      <div style={{ ...card }}>
+        <div style={{ fontSize: 13, color: C.muted, fontWeight: 600, marginBottom: 10 }}>{stores.length ? "Ajouter ou retirer des enseignes" : "Choisis les enseignes où tu fais tes courses"}</div>
+        {CHAIN_KINDS.map((kind) => (
+          <div key={kind} style={{ marginBottom: 10 }}>
+            <div style={{ fontSize: 11, letterSpacing: ".1em", fontWeight: 800, color: C.mutedDim, textTransform: "uppercase", marginBottom: 6 }}>{kind}</div>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
+              {CHAINS.filter((c) => c.kind === kind).map((c) => (
+                <Chip key={c.id} on={saved.has(c.id)} onClick={() => toggle(c)} color={C.tomato}>{saved.has(c.id) ? "✓ " : ""}{c.label}</Chip>
+              ))}
+            </div>
+          </div>
+        ))}
+        <div style={{ fontSize: 11, color: C.mutedDim }}>Écarts de prix approximatifs entre enseignes, d'après les comparatifs publiés en France.</div>
       </div>
     </>
   );
